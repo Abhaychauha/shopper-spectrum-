@@ -1,362 +1,570 @@
 """
-Shopper Spectrum: Customer Segmentation and Product Recommendations in E-Commerce
------------------------------------------------------------------------------------
-Streamlit application implementing the two modules required by the project brief:
-
-1. Product Recommendation Module
-   - User enters a product name -> app returns the top 5 similar products
-     using item-based collaborative filtering (cosine similarity on the
-     CustomerID-Description / StockCode matrix).
-
-2. Customer Segmentation Module
-   - User enters Recency, Frequency and Monetary values -> app predicts the
-     customer's RFM cluster and maps it to a business-friendly segment label
-     (High-Value, Regular, Occasional, At-Risk).
-
-This script expects three artifacts produced during model training (see the
-"Artifacts expected" section below) to be present in the same folder as this
-file, or in a path supplied via the sidebar. If they are not found, the app
-falls back to a small demo dataset so the UI can still be explored.
-
-Artifacts expected
--------------------
-- rfm_kmeans_model.pkl   : trained KMeans (or other clustering) model fit on
-                           scaled [Recency, Frequency, Monetary] features.
-- rfm_scaler.pkl         : the StandardScaler (or similar) fit on the RFM
-                           features before clustering.
-- cluster_label_map.pkl  : dict mapping the raw cluster id (e.g. 0,1,2,3) to
-                           the business label, e.g.
-                           {0: "High-Value", 1: "Regular",
-                            2: "Occasional", 3: "At-Risk"}
-- product_similarity.pkl : a pandas DataFrame (square matrix) of cosine
-                           similarities between products, indexed and
-                           columned by product Description (or StockCode).
+Shopper Spectrum — Customer Segmentation & Product Recommendation Engine
+Matches the dark-purple UI shown in the design reference.
 """
 
-import os
-import pickle
+import io
+import warnings
+warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+from scipy import stats
 
-# --------------------------------------------------------------------------------------
-# Page configuration
-# --------------------------------------------------------------------------------------
+# ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Shopper Spectrum",
     page_icon="🛒",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-ARTIFACT_DIR = os.path.dirname(os.path.abspath("online_retail.csv"))
-
-KMEANS_PATH = os.path.join(ARTIFACT_DIR, "rfm_kmeans_model.pkl")
-SCALER_PATH = os.path.join(ARTIFACT_DIR, "rfm_scaler.pkl")
-LABEL_MAP_PATH = os.path.join(ARTIFACT_DIR, "cluster_label_map.pkl")
-SIMILARITY_PATH = os.path.join(ARTIFACT_DIR, "product_similarity.pkl")
-
-
-# --------------------------------------------------------------------------------------
-# Cached loaders
-# --------------------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
-def load_pickle(path):
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    return None
-
-
-@st.cache_resource(show_spinner=False)
-def load_artifacts():
-    kmeans = load_pickle(KMEANS_PATH)
-    scaler = load_pickle(SCALER_PATH)
-    label_map = load_pickle(LABEL_MAP_PATH)
-    similarity_df = load_pickle(SIMILARITY_PATH)
-    return kmeans, scaler, label_map, similarity_df
-
-
-def default_label_map(n_clusters):
-    """Fallback label map if cluster_label_map.pkl is missing.
-    Assigns labels by sorting cluster centers loosely; in practice the
-    real mapping should come from RFM-average interpretation done in the
-    notebook (see project Step 4)."""
-    fallback_labels = ["High-Value", "Regular", "Occasional", "At-Risk"]
-    return {i: fallback_labels[i % len(fallback_labels)] for i in range(n_clusters)}
-
-
-def make_demo_similarity_matrix():
-    """Small demo product-similarity matrix used only when no trained
-    artifact is found, so the UI remains usable for exploration/testing."""
-    products = [
-        "WHITE HANGING HEART T-LIGHT HOLDER",
-        "RED WOOLLY HOTTIE WHITE HEART",
-        "SET 7 BABUSHKA NESTING BOXES",
-        "GLASS STAR FROSTED T-LIGHT HOLDER",
-        "JUMBO BAG RED RETROSPOT",
-        "REGENCY CAKESTAND 3 TIER",
-        "PARTY BUNTING",
-        "LUNCH BAG RED RETROSPOT",
-    ]
-    rng = np.random.default_rng(42)
-    mat = rng.random((len(products), len(products)))
-    mat = (mat + mat.T) / 2
-    np.fill_diagonal(mat, 1.0)
-    return pd.DataFrame(mat, index=products, columns=products)
-
-
-# --------------------------------------------------------------------------------------
-# Recommendation logic
-# --------------------------------------------------------------------------------------
-def get_recommendations(product_name, similarity_df, top_n=5):
-    if similarity_df is None or product_name not in similarity_df.index:
-        return None
-    scores = similarity_df.loc[product_name].drop(labels=[product_name], errors="ignore")
-    top_products = scores.sort_values(ascending=False).head(top_n)
-    return top_products
-
-
-def find_closest_matches(query, similarity_df, limit=8):
-    if similarity_df is None:
-        return []
-    query_lower = query.strip().lower()
-    matches = [p for p in similarity_df.index if query_lower in p.lower()]
-    return matches[:limit]
-
-
-# --------------------------------------------------------------------------------------
-# Segmentation logic
-# --------------------------------------------------------------------------------------
-def predict_segment(recency, frequency, monetary, kmeans, scaler, label_map):
-    features = np.array([[recency, frequency, monetary]])
-
-    if scaler is not None:
-        features_scaled = scaler.transform(features)
-    else:
-        # Fallback: simple manual scaling (not equivalent to a fitted
-        # StandardScaler, used only when no scaler artifact is available)
-        features_scaled = features
-
-    if kmeans is not None:
-        cluster_id = int(kmeans.predict(features_scaled)[0])
-    else:
-        # Rule-based fallback so the UI still works without a trained model
-        if recency <= 30 and frequency >= 10 and monetary >= 1000:
-            cluster_id = 0
-        elif frequency >= 5 and monetary >= 300:
-            cluster_id = 1
-        elif recency > 180:
-            cluster_id = 3
-        else:
-            cluster_id = 2
-
-    if label_map is not None and cluster_id in label_map:
-        segment = label_map[cluster_id]
-    else:
-        segment = default_label_map(4).get(cluster_id, f"Cluster {cluster_id}")
-
-    return cluster_id, segment
-
-
-SEGMENT_INFO = {
-    "High-Value": {
-        "color": "#1b873f",
-        "description": "Recent, frequent, and big-spending customers. Prioritize loyalty "
-        "rewards and premium offers to retain them.",
-    },
-    "Regular": {
-        "color": "#2563eb",
-        "description": "Steady purchasers with moderate frequency and spend. Good targets "
-        "for upsell and cross-sell campaigns.",
-    },
-    "Occasional": {
-        "color": "#d97706",
-        "description": "Infrequent, lower-spend customers. Consider engagement campaigns "
-        "to increase purchase frequency.",
-    },
-    "At-Risk": {
-        "color": "#dc2626",
-        "description": "Haven't purchased in a long time. Strong candidates for win-back "
-        "and retention offers.",
-    },
+# ── Global CSS — dark navy/purple theme ───────────────────────────────────────
+st.markdown("""
+<style>
+/* ── Root / body ── */
+html, body, [data-testid="stAppViewContainer"] {
+    background-color: #0f0e1a !important;
+    color: #e2e0f0 !important;
+    font-family: 'Inter', sans-serif;
+}
+[data-testid="stMain"] {
+    background-color: #0f0e1a !important;
 }
 
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background-color: #1a1830 !important;
+    border-right: 1px solid #2e2b4a !important;
+}
+[data-testid="stSidebar"] * { color: #c8c4e8 !important; }
+[data-testid="stSidebar"] .stRadio label { color: #c8c4e8 !important; font-size: 14px; }
+[data-testid="stSidebarContent"] { padding-top: 1.5rem; }
 
-# --------------------------------------------------------------------------------------
-# Sidebar
-# --------------------------------------------------------------------------------------
+/* ── Upload box ── */
+[data-testid="stFileUploader"] {
+    border: 2px dashed #5b4fcf !important;
+    border-radius: 10px !important;
+    background: #1f1d35 !important;
+    padding: 4px !important;
+}
+
+/* ── Buttons ── */
+.stButton > button {
+    background: linear-gradient(135deg, #6c4fcf, #a855c7) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+.stButton > button:hover { opacity: 0.88 !important; }
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: #1f1d35;
+    border: 1px solid #2e2b4a;
+    border-radius: 12px;
+    padding: 14px 18px !important;
+}
+[data-testid="stMetricLabel"] { color: #a09dc8 !important; font-size: 12px !important; }
+[data-testid="stMetricValue"] { color: #e2e0f0 !important; font-size: 26px !important; font-weight: 700 !important; }
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] { background: #1a1830; border-radius: 10px; gap: 4px; padding: 4px; }
+.stTabs [data-baseweb="tab"] { border-radius: 8px; color: #a09dc8 !important; font-weight: 500; }
+.stTabs [aria-selected="true"] { background: #3b2fa0 !important; color: white !important; }
+
+/* ── Selectbox / inputs ── */
+[data-testid="stSelectbox"] select,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input {
+    background-color: #1f1d35 !important;
+    color: #e2e0f0 !important;
+    border: 1px solid #3b3760 !important;
+    border-radius: 8px !important;
+}
+
+/* ── Info / success boxes ── */
+.stAlert { border-radius: 10px !important; }
+
+/* ── Divider ── */
+hr { border-color: #2e2b4a !important; }
+</style>
+""", unsafe_allow_html=True)
+
+PLOTLY_THEME = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="#12102a",
+    font_color="#c8c4e8",
+    colorway=["#7c6fcd", "#a855c7", "#e879a0", "#f59e0b", "#34d399", "#60a5fa"],
+    xaxis=dict(gridcolor="#2e2b4a", linecolor="#2e2b4a"),
+    yaxis=dict(gridcolor="#2e2b4a", linecolor="#2e2b4a"),
+)
+
+# ── Data loading & caching ─────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def load_and_clean(raw: bytes) -> pd.DataFrame:
+    df = pd.read_csv(io.BytesIO(raw))
+    df["InvoiceNo"] = df["InvoiceNo"].astype(str)
+    df = df.dropna(subset=["CustomerID"])
+    df = df[~df["InvoiceNo"].str.startswith("C")]
+    df = df[(df["Quantity"] > 0) & (df["UnitPrice"] > 0)]
+    df = df.dropna(subset=["Description"])
+    df["Description"] = df["Description"].str.strip()
+    df["CustomerID"] = df["CustomerID"].astype(int)
+    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+    df["TotalPrice"] = df["Quantity"] * df["UnitPrice"]
+    df["Month"] = df["InvoiceDate"].dt.to_period("M").dt.to_timestamp()
+    return df
+
+@st.cache_data(show_spinner=False)
+def build_rfm(_df: pd.DataFrame) -> pd.DataFrame:
+    snap = _df["InvoiceDate"].max() + pd.Timedelta(days=1)
+    rfm = _df.groupby("CustomerID").agg(
+        Recency=("InvoiceDate", lambda x: (snap - x.max()).days),
+        Frequency=("InvoiceNo", "nunique"),
+        Monetary=("TotalPrice", "sum"),
+    ).reset_index()
+    return rfm
+
+@st.cache_data(show_spinner=False)
+def cluster_rfm(_rfm: pd.DataFrame, k: int = 4):
+    scaler = StandardScaler()
+    X = scaler.fit_transform(_rfm[["Recency", "Frequency", "Monetary"]])
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    _rfm = _rfm.copy()
+    _rfm["Cluster"] = km.fit_predict(X)
+    profile = _rfm.groupby("Cluster")[["Recency", "Frequency", "Monetary"]].mean()
+    # Auto-label
+    label_map = {}
+    remaining = list(profile.index)
+    hv = profile.loc[remaining, "Frequency"].idxmax()
+    label_map[hv] = "High-Value"; remaining.remove(hv)
+    ar = profile.loc[remaining, "Recency"].idxmax()
+    label_map[ar] = "At-Risk"; remaining.remove(ar)
+    reg = profile.loc[remaining, "Monetary"].idxmax()
+    label_map[reg] = "Regular"; remaining.remove(reg)
+    for c in remaining:
+        label_map[c] = "Occasional"
+    _rfm["Segment"] = _rfm["Cluster"].map(label_map)
+    return _rfm, km, scaler, label_map
+
+@st.cache_data(show_spinner=False)
+def build_collab_sim(_df: pd.DataFrame):
+    basket = _df.groupby(["CustomerID", "Description"])["Quantity"].sum().unstack(fill_value=0)
+    pop = (basket > 0).sum(axis=0)
+    keep = pop[pop >= 3].index
+    if len(keep) > 1000:
+        keep = pop.loc[keep].sort_values(ascending=False).head(1000).index
+    basket = basket[keep]
+    sim = cosine_similarity(basket.T)
+    return pd.DataFrame(sim, index=basket.columns, columns=basket.columns)
+
+@st.cache_data(show_spinner=False)
+def build_tfidf_sim(_df: pd.DataFrame):
+    products = _df["Description"].dropna().unique()
+    tfidf = TfidfVectorizer(stop_words="english")
+    mat = tfidf.fit_transform(products)
+    sim = cosine_similarity(mat)
+    return pd.DataFrame(sim, index=products, columns=products)
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🛒 Shopper Spectrum")
-    st.caption("Customer Segmentation & Product Recommendations")
-    page = st.radio(
-        "Navigate",
-        ["🎯 Product Recommendation", "🧩 Customer Segmentation", "ℹ️ About"],
-    )
+    st.markdown("""
+    <div style='text-align:center; padding: 10px 0 20px 0;'>
+        <div style='font-size:40px;'>🛒</div>
+        <div style='font-size:18px; font-weight:700; color:#d4d0f5;'>Shopper Spectrum</div>
+        <div style='font-size:11px; color:#7b78a8; margin-top:2px; letter-spacing:.5px;'>
+            INNOVEXIS · Data Science and Gen AI
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("**Upload online_retail.csv**")
+    uploaded = st.file_uploader(" ", type=["csv"], label_visibility="collapsed")
+    st.caption("100MB per file • CSV")
     st.divider()
-    st.caption(
-        "Place `rfm_kmeans_model.pkl`, `rfm_scaler.pkl`, `cluster_label_map.pkl` "
-        "and `product_similarity.pkl` next to this script to use your trained "
-        "models. Demo data is used otherwise."
+
+    st.markdown("**Navigate**")
+    page = st.radio(
+        "",
+        ["🏠 Overview", "📊 EDA & Insights", "🎯 Customer Segments",
+         "🔮 Recommendations", "🧪 Hypothesis Tests"],
+        label_visibility="collapsed",
     )
 
-kmeans_model, rfm_scaler, cluster_label_map, similarity_matrix = load_artifacts()
+# ── Load data ─────────────────────────────────────────────────────────────────
+df = None
+if uploaded:
+    with st.spinner("Loading and cleaning data…"):
+        df = load_and_clean(uploaded.getvalue())
 
-using_demo_similarity = similarity_matrix is None
-if using_demo_similarity:
-    similarity_matrix = make_demo_similarity_matrix()
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 1 — OVERVIEW
+# ═══════════════════════════════════════════════════════════════════════════════
+if page == "🏠 Overview":
+    # Hero banner
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #6c4fcf 0%, #a855c7 50%, #e879a0 100%);
+                border-radius: 18px; padding: 48px 40px; text-align:center; margin-bottom:28px;">
+        <div style="font-size:38px;">🛒</div>
+        <div style="font-size:36px; font-weight:800; color:white; margin:8px 0 6px 0;">
+            Shopper Spectrum
+        </div>
+        <div style="font-size:15px; color:rgba(255,255,255,0.80); letter-spacing:.5px;">
+            Customer Segmentation &amp; Product Recommendation Engine
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-using_demo_model = kmeans_model is None or rfm_scaler is None
-
-
-# --------------------------------------------------------------------------------------
-# Page: Product Recommendation
-# --------------------------------------------------------------------------------------
-if page == "🎯 Product Recommendation":
-    st.header("🎯 Product Recommendation Module")
-    st.write(
-        "Enter a product name to get the **top 5 similar products** based on "
-        "item-based collaborative filtering (cosine similarity)."
-    )
-
-    if using_demo_similarity:
-        st.info(
-            "No trained `product_similarity.pkl` found — showing a small demo "
-            "catalog so you can try out the UI.",
-            icon="ℹ️",
-        )
-
-    product_input = st.text_input("Product Name", placeholder="e.g. WHITE HANGING HEART T-LIGHT HOLDER")
-
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        get_rec = st.button("Get Recommendations", type="primary")
-
-    if get_rec:
-        if not product_input.strip():
-            st.warning("Please enter a product name.")
-        else:
-            exact_match = product_input.strip().upper() in [p.upper() for p in similarity_matrix.index]
-            matched_name = None
-            if product_input.strip() in similarity_matrix.index:
-                matched_name = product_input.strip()
-            else:
-                upper_map = {p.upper(): p for p in similarity_matrix.index}
-                if product_input.strip().upper() in upper_map:
-                    matched_name = upper_map[product_input.strip().upper()]
-
-            if matched_name is None:
-                suggestions = find_closest_matches(product_input, similarity_matrix)
-                st.error(f"Product '{product_input}' not found in catalog.")
-                if suggestions:
-                    st.write("Did you mean one of these?")
-                    for s in suggestions:
-                        st.write(f"- {s}")
-            else:
-                recommendations = get_recommendations(matched_name, similarity_matrix, top_n=5)
-                st.success(f"Top 5 products similar to **{matched_name}**:")
-
-                cols = st.columns(5)
-                for i, (prod, score) in enumerate(recommendations.items()):
-                    with cols[i % 5]:
-                        st.markdown(
-                            f"""
-                            <div style="border:1px solid #e5e7eb; border-radius:10px;
-                                        padding:14px; height:170px;
-                                        display:flex; flex-direction:column;
-                                        justify-content:space-between;">
-                                <div style="font-weight:600; font-size:14px;">{prod}</div>
-                                <div style="color:#6b7280; font-size:12px;">
-                                    Similarity: {score:.2f}
-                                </div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-
-    with st.expander("Browse available products"):
-        st.dataframe(
-            pd.DataFrame({"Product": similarity_matrix.index}),
-            use_container_width=True,
-            height=250,
-        )
-
-
-# --------------------------------------------------------------------------------------
-# Page: Customer Segmentation
-# --------------------------------------------------------------------------------------
-elif page == "🧩 Customer Segmentation":
-    st.header("🧩 Customer Segmentation Module")
-    st.write(
-        "Enter a customer's RFM values to **predict their segment** "
-        "(High-Value, Regular, Occasional, or At-Risk)."
-    )
-
-    if using_demo_model:
-        st.info(
-            "No trained KMeans model / scaler found — using a simple rule-based "
-            "fallback so you can try out the UI.",
-            icon="ℹ️",
-        )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        recency = st.number_input("Recency (in days)", min_value=0, value=30, step=1)
-    with c2:
-        frequency = st.number_input("Frequency (number of purchases)", min_value=0, value=5, step=1)
-    with c3:
-        monetary = st.number_input("Monetary (total spend)", min_value=0.0, value=500.0, step=10.0)
-
-    predict = st.button("Predict Cluster", type="primary")
-
-    if predict:
-        cluster_id, segment = predict_segment(
-            recency, frequency, monetary, kmeans_model, rfm_scaler, cluster_label_map
-        )
-        info = SEGMENT_INFO.get(segment, {"color": "#374151", "description": ""})
-
-        st.markdown(
-            f"""
-            <div style="border-left: 6px solid {info['color']};
-                        background:#f9fafb; padding:18px 20px; border-radius:8px;">
-                <div style="font-size:13px; color:#6b7280;">Predicted Segment</div>
-                <div style="font-size:26px; font-weight:700; color:{info['color']};">
-                    {segment}
+    # Feature cards
+    col1, col2, col3 = st.columns(3)
+    cards = [
+        ("🎯", "RFM Clustering",
+         "Segment customers into High-Value, Regular, At-Risk &amp; Occasional groups using KMeans.",
+         "#1d2a3a", "#5eaaff"),
+        ("💛", "Collaborative Filtering",
+         "Personalised product picks based on what similar shoppers bought.",
+         "#2a1d35", "#c084fc"),
+        ("📄", "Content-Based Recs",
+         "TF-IDF + cosine similarity on product descriptions for item-to-item suggestions.",
+         "#1d2a35", "#34d399"),
+    ]
+    for col, (icon, title, desc, bg, accent) in zip([col1, col2, col3], cards):
+        with col:
+            st.markdown(f"""
+            <div style="background:{bg}; border:1px solid #2e2b4a; border-radius:14px;
+                        padding:22px 20px; min-height:140px;">
+                <div style="font-size:20px; margin-bottom:6px;">{icon}
+                    <span style="color:{accent}; font-weight:700; font-size:15px;">{title}</span>
                 </div>
-                <div style="margin-top:8px; color:#374151;">{info['description']}</div>
+                <div style="color:#a09dc8; font-size:13px; line-height:1.6;">{desc}</div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.caption(f"Raw cluster id: {cluster_id}")
+            """, unsafe_allow_html=True)
 
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-# --------------------------------------------------------------------------------------
-# Page: About
-# --------------------------------------------------------------------------------------
-else:
-    st.header("ℹ️ About this project")
-    st.markdown(
-        """
-**Shopper Spectrum: Customer Segmentation and Product Recommendations in E-Commerce**
+    if df is None:
+        st.markdown("""
+        <div style="background:#1f1d35; border:1px solid #3b2fa0; border-radius:12px;
+                    padding:20px 24px; color:#c8c4e8; font-size:14px;">
+            👆 <b>Upload your <code style='background:#2e2b4a;padding:2px 6px;
+            border-radius:4px;color:#a5f3fc'>online_retail.csv</code> in the sidebar to begin.</b><br>
+            <span style='color:#7b78a8; font-size:12px;margin-top:4px;display:block;'>
+            Dataset source: UCI ML Repository – Online Retail (or Kaggle mirror).</span>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.success(f"✅ Data loaded — **{len(df):,}** clean transactions · **{df['CustomerID'].nunique():,}** customers · **{df['Description'].nunique():,}** products")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Transactions", f"{len(df):,}")
+        c2.metric("Unique Customers", f"{df['CustomerID'].nunique():,}")
+        c3.metric("Unique Products", f"{df['Description'].nunique():,}")
+        c4.metric("Total Revenue", f"£{df['TotalPrice'].sum():,.0f}")
 
-This app is the deliverable described in the project brief's *Streamlit Web
-Application* section. It implements two modules:
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 2 — EDA & INSIGHTS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "📊 EDA & Insights":
+    st.title("📊 EDA & Insights")
+    if df is None:
+        st.warning("Upload `online_retail.csv` in the sidebar to continue.")
+        st.stop()
 
-1. **Product Recommendation** — item-based collaborative filtering using
-   cosine similarity on a CustomerID-Description purchase matrix, returning
-   the top 5 most similar products for a given product name.
-2. **Customer Segmentation** — RFM (Recency, Frequency, Monetary) feature
-   engineering, scaled and clustered (KMeans), with clusters mapped to
-   business segments: **High-Value**, **Regular**, **Occasional**, and
-   **At-Risk**.
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Transactions", f"{len(df):,}")
+    c2.metric("Customers", f"{df['CustomerID'].nunique():,}")
+    c3.metric("Products", f"{df['Description'].nunique():,}")
+    c4.metric("Revenue", f"£{df['TotalPrice'].sum():,.0f}")
+    st.divider()
 
-To go live with real data, train the models in the accompanying notebook and
-save these artifacts next to `app.py`:
+    tab1, tab2, tab3, tab4 = st.tabs(["Revenue Over Time", "Top Products", "Top Countries", "Price Distribution"])
 
-- `rfm_kmeans_model.pkl`
-- `rfm_scaler.pkl`
-- `cluster_label_map.pkl`
-- `product_similarity.pkl`
-"""
+    with tab1:
+        monthly = df.groupby("Month")["TotalPrice"].sum().reset_index()
+        fig = px.area(monthly, x="Month", y="TotalPrice",
+                      title="Monthly Revenue",
+                      labels={"TotalPrice": "Revenue (£)", "Month": ""},
+                      color_discrete_sequence=["#7c6fcd"])
+        fig.update_traces(fill="tozeroy", fillcolor="rgba(124,111,205,0.15)")
+        fig.update_layout(**PLOTLY_THEME, title_font_size=16)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab2:
+        top_p = (df.groupby("Description")["TotalPrice"].sum()
+                   .sort_values(ascending=False).head(15).reset_index())
+        fig = px.bar(top_p, x="TotalPrice", y="Description", orientation="h",
+                     title="Top 15 Products by Revenue",
+                     labels={"TotalPrice": "Revenue (£)", "Description": ""},
+                     color="TotalPrice",
+                     color_continuous_scale=["#3b2fa0", "#a855c7", "#e879a0"])
+        fig.update_layout(**PLOTLY_THEME, title_font_size=16,
+                          yaxis=dict(autorange="reversed", gridcolor="#2e2b4a"),
+                          coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab3:
+        top_c = (df.groupby("Country")["TotalPrice"].sum()
+                   .sort_values(ascending=False).head(12).reset_index())
+        fig = px.pie(top_c, names="Country", values="TotalPrice",
+                     title="Revenue by Country (Top 12)",
+                     color_discrete_sequence=px.colors.sequential.Purpor)
+        fig.update_layout(**PLOTLY_THEME, title_font_size=16)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab4:
+        sample = df[df["UnitPrice"] < df["UnitPrice"].quantile(0.99)]
+        fig = px.histogram(sample, x="UnitPrice", nbins=60,
+                           title="Unit Price Distribution (99th percentile cap)",
+                           labels={"UnitPrice": "Unit Price (£)"},
+                           color_discrete_sequence=["#a855c7"])
+        fig.update_layout(**PLOTLY_THEME, title_font_size=16)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+    st.subheader("🔢 Raw Data Sample")
+    st.dataframe(df.head(200), use_container_width=True, height=280)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 3 — CUSTOMER SEGMENTS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "🎯 Customer Segments":
+    st.title("🎯 Customer Segmentation")
+    if df is None:
+        st.warning("Upload `online_retail.csv` in the sidebar to continue.")
+        st.stop()
+
+    with st.spinner("Computing RFM & clustering…"):
+        rfm = build_rfm(df)
+        rfm_seg, km, scaler, label_map = cluster_rfm(rfm)
+
+    SEGMENT_COLORS = {
+        "High-Value": "#34d399", "Regular": "#60a5fa",
+        "Occasional": "#f59e0b", "At-Risk": "#e879a0",
+    }
+
+    # Summary cards
+    counts = rfm_seg["Segment"].value_counts()
+    cols = st.columns(4)
+    for col, seg in zip(cols, ["High-Value", "Regular", "Occasional", "At-Risk"]):
+        n = counts.get(seg, 0)
+        pct = n / len(rfm_seg) * 100
+        col.markdown(f"""
+        <div style="background:#1f1d35; border-left:4px solid {SEGMENT_COLORS[seg]};
+                    border-radius:10px; padding:16px 18px;">
+            <div style="font-size:11px; color:#7b78a8; text-transform:uppercase; letter-spacing:.8px;">{seg}</div>
+            <div style="font-size:28px; font-weight:700; color:{SEGMENT_COLORS[seg]};">{n}</div>
+            <div style="font-size:12px; color:#a09dc8;">{pct:.1f}% of customers</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4 = st.tabs(["Scatter Plot", "Segment Profiles", "Distribution", "Predict Segment"])
+
+    with tab1:
+        fig = px.scatter(rfm_seg, x="Recency", y="Monetary", size="Frequency",
+                         color="Segment", hover_data=["CustomerID", "Frequency"],
+                         color_discrete_map=SEGMENT_COLORS,
+                         title="RFM Scatter — Recency vs Monetary (size = Frequency)",
+                         opacity=0.7)
+        fig.update_layout(**PLOTLY_THEME, title_font_size=15)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab2:
+        profile = rfm_seg.groupby("Segment")[["Recency", "Frequency", "Monetary"]].mean().round(1)
+        profile["Customers"] = rfm_seg["Segment"].value_counts()
+        st.dataframe(profile.style.format({"Recency": "{:.1f}", "Frequency": "{:.1f}", "Monetary": "£{:,.0f}"}),
+                     use_container_width=True)
+
+        fig = px.bar(profile.reset_index(), x="Segment",
+                     y=["Recency", "Frequency", "Monetary"],
+                     barmode="group", title="Average RFM per Segment",
+                     color_discrete_sequence=["#7c6fcd", "#a855c7", "#e879a0"])
+        fig.update_layout(**PLOTLY_THEME, title_font_size=15)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab3:
+        metric = st.selectbox("Metric", ["Recency", "Frequency", "Monetary"])
+        fig = px.box(rfm_seg, x="Segment", y=metric, color="Segment",
+                     color_discrete_map=SEGMENT_COLORS,
+                     title=f"{metric} Distribution by Segment")
+        fig.update_layout(**PLOTLY_THEME, title_font_size=15, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab4:
+        st.markdown("#### Predict a Customer's Segment")
+        c1, c2, c3 = st.columns(3)
+        rec = c1.number_input("Recency (days)", 0, 1000, 30)
+        freq = c2.number_input("Frequency (orders)", 0, 500, 5)
+        mon = c3.number_input("Monetary (£)", 0.0, 200000.0, 500.0, step=50.0)
+
+        if st.button("Predict", type="primary"):
+            x = scaler.transform([[rec, freq, mon]])
+            cid = int(km.predict(x)[0])
+            seg = label_map.get(cid, f"Cluster {cid}")
+            color = SEGMENT_COLORS.get(seg, "#7c6fcd")
+            st.markdown(f"""
+            <div style="border-left:6px solid {color}; background:#1f1d35;
+                        padding:20px 24px; border-radius:10px; margin-top:12px;">
+                <div style="font-size:12px; color:#7b78a8;">Predicted Segment</div>
+                <div style="font-size:30px; font-weight:800; color:{color};">{seg}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 4 — RECOMMENDATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "🔮 Recommendations":
+    st.title("🔮 Product Recommendations")
+    if df is None:
+        st.warning("Upload `online_retail.csv` in the sidebar to continue.")
+        st.stop()
+
+    tab1, tab2 = st.tabs(["🤝 Collaborative Filtering", "📄 Content-Based (TF-IDF)"])
+
+    with tab1:
+        st.markdown("##### Item-based collaborative filtering — cosine similarity on the customer × product matrix")
+        with st.spinner("Building similarity matrix…"):
+            collab_sim = build_collab_sim(df)
+
+        product = st.selectbox("Select a product", sorted(collab_sim.index.tolist()), key="cf")
+        top_n = st.slider("Number of recommendations", 3, 10, 5, key="cf_n")
+        if st.button("Get Recommendations", key="cf_btn", type="primary"):
+            scores = collab_sim.loc[product].drop(labels=[product], errors="ignore")
+            recs = scores.sort_values(ascending=False).head(top_n)
+            cols = st.columns(min(top_n, 5))
+            for i, (prod, score) in enumerate(recs.items()):
+                with cols[i % 5]:
+                    st.markdown(f"""
+                    <div style="background:#1f1d35; border:1px solid #2e2b4a;
+                                border-radius:12px; padding:16px 14px; min-height:120px;
+                                display:flex; flex-direction:column; justify-content:space-between;">
+                        <div style="font-size:12px; font-weight:600; color:#d4d0f5;">{prod}</div>
+                        <div style="font-size:11px; color:#7c6fcd; margin-top:8px;">
+                            Similarity: {score:.3f}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    with tab2:
+        st.markdown("##### Content-based recommendations — TF-IDF on product description text")
+        with st.spinner("Building TF-IDF matrix…"):
+            tfidf_sim = build_tfidf_sim(df)
+
+        product2 = st.selectbox("Select a product", sorted(tfidf_sim.index.tolist()), key="cb")
+        top_n2 = st.slider("Number of recommendations", 3, 10, 5, key="cb_n")
+        if st.button("Get Recommendations", key="cb_btn", type="primary"):
+            scores2 = tfidf_sim.loc[product2].drop(labels=[product2], errors="ignore")
+            recs2 = scores2.sort_values(ascending=False).head(top_n2)
+            cols2 = st.columns(min(top_n2, 5))
+            for i, (prod, score) in enumerate(recs2.items()):
+                with cols2[i % 5]:
+                    st.markdown(f"""
+                    <div style="background:#1a1d2e; border:1px solid #2e2b4a;
+                                border-radius:12px; padding:16px 14px; min-height:120px;
+                                display:flex; flex-direction:column; justify-content:space-between;">
+                        <div style="font-size:12px; font-weight:600; color:#d4d0f5;">{prod}</div>
+                        <div style="font-size:11px; color:#34d399; margin-top:8px;">
+                            Similarity: {score:.3f}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 5 — HYPOTHESIS TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "🧪 Hypothesis Tests":
+    st.title("🧪 Hypothesis Tests")
+    if df is None:
+        st.warning("Upload `online_retail.csv` in the sidebar to continue.")
+        st.stop()
+
+    with st.spinner("Running segmentation…"):
+        rfm = build_rfm(df)
+        rfm_seg, _, _, _ = cluster_rfm(rfm)
+
+    def result_card(title, stat, pval, h0, h1, alpha=0.05):
+        reject = pval < alpha
+        color = "#34d399" if reject else "#e879a0"
+        verdict = "Reject H₀" if reject else "Fail to Reject H₀"
+        st.markdown(f"""
+        <div style="background:#1f1d35; border:1px solid #2e2b4a; border-radius:14px;
+                    padding:20px 22px; margin-bottom:16px;">
+            <div style="font-size:15px; font-weight:700; color:#d4d0f5; margin-bottom:10px;">{title}</div>
+            <div style="font-size:12px; color:#7b78a8;">H₀: {h0}</div>
+            <div style="font-size:12px; color:#a09dc8; margin-bottom:12px;">H₁: {h1}</div>
+            <div style="display:flex; gap:24px;">
+                <div><div style="font-size:11px;color:#7b78a8;">Test Stat</div>
+                     <div style="font-size:18px;font-weight:700;color:#c8c4e8;">{stat:.4f}</div></div>
+                <div><div style="font-size:11px;color:#7b78a8;">p-value</div>
+                     <div style="font-size:18px;font-weight:700;color:#c8c4e8;">{pval:.4f}</div></div>
+                <div><div style="font-size:11px;color:#7b78a8;">Verdict</div>
+                     <div style="font-size:18px;font-weight:700;color:{color};">{verdict}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Test 1 — UK vs non-UK avg order value
+    uk = df[df["Country"] == "United Kingdom"]["TotalPrice"]
+    non_uk = df[df["Country"] != "United Kingdom"]["TotalPrice"]
+    stat1, p1 = stats.ttest_ind(uk, non_uk, equal_var=False)
+    result_card(
+        "T-Test: Average Order Value — UK vs Non-UK",
+        stat1, p1,
+        "Mean order value is the same for UK and non-UK customers",
+        "Mean order value differs between UK and non-UK customers",
     )
+
+    # Test 2 — High-Value vs At-Risk monetary
+    hv = rfm_seg[rfm_seg["Segment"] == "High-Value"]["Monetary"]
+    ar = rfm_seg[rfm_seg["Segment"] == "At-Risk"]["Monetary"]
+    stat2, p2 = stats.ttest_ind(hv, ar, equal_var=False)
+    result_card(
+        "T-Test: Total Spend — High-Value vs At-Risk Customers",
+        stat2, p2,
+        "Mean total spend is equal for High-Value and At-Risk segments",
+        "High-Value customers spend significantly more than At-Risk customers",
+    )
+
+    # Test 3 — Correlation: Frequency vs Monetary
+    corr, p3 = stats.pearsonr(rfm_seg["Frequency"], rfm_seg["Monetary"])
+    result_card(
+        "Pearson Correlation: Purchase Frequency vs Total Spend",
+        corr, p3,
+        "There is no linear correlation between frequency and monetary value",
+        "There is a significant positive correlation between frequency and spend",
+    )
+
+    # Test 4 — Chi-squared: Segment vs high/low recency
+    rfm_seg["RecencyBand"] = pd.cut(rfm_seg["Recency"], bins=[0, 30, 90, 999],
+                                     labels=["Recent", "Moderate", "Lapsed"])
+    ct = pd.crosstab(rfm_seg["Segment"], rfm_seg["RecencyBand"])
+    chi2, p4, dof, _ = stats.chi2_contingency(ct)
+    result_card(
+        "Chi-Squared Test: Segment vs Recency Band",
+        chi2, p4,
+        "Customer segment is independent of recency band",
+        "Customer segment and recency band are significantly associated",
+    )
+
+    st.divider()
+    st.subheader("Correlation Heatmap — RFM Features")
+    corr_mat = rfm_seg[["Recency", "Frequency", "Monetary"]].corr()
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_mat.values, x=corr_mat.columns, y=corr_mat.columns,
+        colorscale="Purpor", zmin=-1, zmax=1,
+        text=corr_mat.values.round(2), texttemplate="%{text}",
+    ))
+    fig.update_layout(**PLOTLY_THEME, title="RFM Correlation Matrix", height=320)
+    st.plotly_chart(fig, use_container_width=True)
