@@ -633,10 +633,12 @@ elif page == "🧪 Hypothesis Tests":
         cap2  = df["Quantity"].quantile(0.97)
         ds    = df[(df["UnitPrice"]<=cap1)&(df["Quantity"]<=cap2)].sample(min(3000,len(df)),random_state=42)
         fig   = px.scatter(ds, x="Quantity", y="UnitPrice", opacity=0.35,
-                           trendline="ols",
                            color_discrete_sequence=["#2dd4bf"],
-                           trendline_color_override="#f97316",
                            labels={"UnitPrice":"Unit Price (£)"})
+        m, b  = np.polyfit(ds["Quantity"], ds["UnitPrice"], 1)
+        x_rng = np.linspace(ds["Quantity"].min(), ds["Quantity"].max(), 200)
+        fig.add_trace(go.Scatter(x=x_rng, y=m*x_rng+b, mode="lines",
+                                 line=dict(color="#f97316", width=2), name="Trend"))
         fig.update_layout(**lay(height=290))
         st.plotly_chart(fig, use_container_width=True)
         insight("Reject H₀: Quantity and UnitPrice are significantly correlated." if rej2
