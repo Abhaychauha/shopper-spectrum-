@@ -456,12 +456,11 @@ elif page == "📈 RFM Analysis":
         col1,col2 = st.columns(2)
         with col1:
             section("Recency vs Frequency")
-            rfm_cap = rfm_a[rfm_a["Frequency"] < rfm_a["Frequency"].quantile(0.99)]
+            rfm_cap = rfm_s[rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.99)]
             fig = px.scatter(rfm_cap, x="Recency", y="Frequency",
-                             color="Segment" if "Segment" in rfm_s.columns else None,
-                             opacity=0.5, color_discrete_map=SEG_COLORS,
-                             labels={"Frequency":"Frequency (orders)"},
-                             data_frame=rfm_s[rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.99)])
+                             color="Segment", opacity=0.5,
+                             color_discrete_map=SEG_COLORS,
+                             labels={"Frequency":"Frequency (orders)"})
             fig.update_layout(**lay(height=290))
             st.plotly_chart(fig, use_container_width=True)
         with col2:
