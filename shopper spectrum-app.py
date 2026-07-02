@@ -259,7 +259,7 @@ if page == "🏠 Overview":
                      color="Missing", color_continuous_scale=TEAL_CS)
         fig.update_layout(**lay(height=230, coloraxis_showscale=False,
                                 xaxis=dict(tickangle=-30)))
-        st.plotly_chart(fig, use_container_width=True, key="fig_1")
+        st.plotly_chart(fig, use_container_width=True, key="pc_1")
     with col2:
         section("Data Type Distribution")
         dt = df.dtypes.astype(str).value_counts().reset_index()
@@ -268,7 +268,7 @@ if page == "🏠 Overview":
                      color_discrete_sequence=COLORS, hole=0.5)
         fig.update_layout(**lay(height=230))
         fig.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(fig, use_container_width=True, key="fig_2")
+        st.plotly_chart(fig, use_container_width=True, key="pc_2")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # EDA & INSIGHTS
@@ -294,7 +294,7 @@ elif page == "📊 EDA & Insights":
             fig.update_layout(**lay(height=370, coloraxis_showscale=False,
                                     yaxis=dict(autorange="reversed")))
             fig.update_traces(marker_cornerradius=4)
-            st.plotly_chart(fig, use_container_width=True, key="fig_3")
+            st.plotly_chart(fig, use_container_width=True, key="pc_3")
         with col2:
             section("Avg Spend per Customer by Country")
             g = df.groupby("Country").agg(
@@ -307,7 +307,7 @@ elif page == "📊 EDA & Insights":
             fig.update_layout(**lay(height=370, coloraxis_showscale=False,
                                     yaxis=dict(autorange="reversed")))
             fig.update_traces(marker_cornerradius=4)
-            st.plotly_chart(fig, use_container_width=True, key="fig_4")
+            st.plotly_chart(fig, use_container_width=True, key="pc_4")
 
     with tab2:
         col1,col2 = st.columns(2)
@@ -320,7 +320,7 @@ elif page == "📊 EDA & Insights":
                          labels={"TotalPrice":"Revenue (£)","Description":""})
             fig.update_layout(**lay(height=420, coloraxis_showscale=False,
                                     yaxis=dict(autorange="reversed")))
-            st.plotly_chart(fig, use_container_width=True, key="fig_5")
+            st.plotly_chart(fig, use_container_width=True, key="pc_5")
         with col2:
             section("Top 15 Products by Units Sold")
             tp2 = (df.groupby("Description")["Quantity"].sum()
@@ -330,7 +330,7 @@ elif page == "📊 EDA & Insights":
                          labels={"Quantity":"Units Sold","Description":""})
             fig.update_layout(**lay(height=420, coloraxis_showscale=False,
                                     yaxis=dict(autorange="reversed")))
-            st.plotly_chart(fig, use_container_width=True, key="fig_6")
+            st.plotly_chart(fig, use_container_width=True, key="pc_6")
 
     with tab3:
         section("Monthly Revenue Trend")
@@ -341,7 +341,7 @@ elif page == "📊 EDA & Insights":
         fig.update_traces(line_width=2.5, marker_size=6,
                           fill="tozeroy", fillcolor="rgba(45,212,191,0.10)")
         fig.update_layout(**lay(height=290))
-        st.plotly_chart(fig, use_container_width=True, key="fig_7")
+        st.plotly_chart(fig, use_container_width=True, key="pc_7")
 
         col1,col2 = st.columns(2)
         with col1:
@@ -354,7 +354,7 @@ elif page == "📊 EDA & Insights":
                          color="Orders", color_continuous_scale=TEAL_CS)
             fig.update_layout(**lay(height=260, coloraxis_showscale=False))
             fig.update_traces(marker_cornerradius=4)
-            st.plotly_chart(fig, use_container_width=True, key="fig_8")
+            st.plotly_chart(fig, use_container_width=True, key="pc_8")
         with col2:
             section("Orders by Hour of Day")
             hr = df.groupby("Hour")["InvoiceNo"].nunique().reset_index()
@@ -363,7 +363,7 @@ elif page == "📊 EDA & Insights":
                          color="Orders", color_continuous_scale=CYAN_CS)
             fig.update_layout(**lay(height=260, coloraxis_showscale=False))
             fig.update_traces(marker_cornerradius=4)
-            st.plotly_chart(fig, use_container_width=True, key="fig_9")
+            st.plotly_chart(fig, use_container_width=True, key="pc_9")
 
     with tab4:
         col1,col2 = st.columns(2)
@@ -374,7 +374,7 @@ elif page == "📊 EDA & Insights":
                                color_discrete_sequence=["#14b8a6"],
                                labels={"UnitPrice":"Unit Price (£)"})
             fig.update_layout(**lay(height=280, bargap=0.05))
-            st.plotly_chart(fig, use_container_width=True, key="fig_10")
+            st.plotly_chart(fig, use_container_width=True, key="pc_10")
         with col2:
             section("Revenue Share by Country (Top 8)")
             rs = df.groupby("Country")["TotalPrice"].sum().sort_values(ascending=False)
@@ -387,7 +387,7 @@ elif page == "📊 EDA & Insights":
             fig.update_layout(**lay(height=280))
             fig.update_traces(textposition="inside", textinfo="percent+label",
                               textfont_size=11)
-            st.plotly_chart(fig, use_container_width=True, key="fig_11")
+            st.plotly_chart(fig, use_container_width=True, key="pc_11")
 
         section("Monthly Quantity Sold")
         mq = df.groupby("Month")["Quantity"].sum().reset_index()
@@ -395,7 +395,7 @@ elif page == "📊 EDA & Insights":
                      color="Quantity", color_continuous_scale=ORNG_CS,
                      labels={"Quantity":"Units Sold"})
         fig.update_layout(**lay(height=260, coloraxis_showscale=False))
-        st.plotly_chart(fig, use_container_width=True, key="fig_12")
+        st.plotly_chart(fig, use_container_width=True, key="pc_12")
 
     with tab5:
         with st.spinner("Building RFM…"):
@@ -411,7 +411,7 @@ elif page == "📊 EDA & Insights":
                 fig = px.histogram(data, x=metric, nbins=40,
                                    color_discrete_sequence=[cs[1][1]])
                 fig.update_layout(**lay(height=230, bargap=0.04))
-                st.plotly_chart(fig, use_container_width=True, key="fig_13")
+                st.plotly_chart(fig, use_container_width=True, key="pc_13")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -451,7 +451,7 @@ elif page == "📈 RFM Analysis":
                 fig = px.histogram(data, x=metric, nbins=45,
                                    color_discrete_sequence=[color])
                 fig.update_layout(**lay(height=230, bargap=0.04))
-                st.plotly_chart(fig, use_container_width=True, key="fig_14")
+                st.plotly_chart(fig, use_container_width=True, key="pc_14")
 
         col1,col2 = st.columns(2)
         with col1:
@@ -462,7 +462,7 @@ elif page == "📈 RFM Analysis":
                              color_discrete_map=SEG_COLORS,
                              labels={"Frequency":"Frequency (orders)"})
             fig.update_layout(**lay(height=290))
-            st.plotly_chart(fig, use_container_width=True, key="fig_15")
+            st.plotly_chart(fig, use_container_width=True, key="pc_15")
         with col2:
             section("Frequency vs Monetary")
             rfm_cap2 = rfm_s[(rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.99)) &
@@ -472,7 +472,7 @@ elif page == "📈 RFM Analysis":
                              color_discrete_map=SEG_COLORS,
                              labels={"Monetary":"Monetary (£)"})
             fig.update_layout(**lay(height=290))
-            st.plotly_chart(fig, use_container_width=True, key="fig_16")
+            st.plotly_chart(fig, use_container_width=True, key="pc_16")
 
     # ── Tab 2: RFM Scoring ────────────────────────────────────────────────────
     with tab2:
@@ -501,7 +501,7 @@ elif page == "📈 RFM Analysis":
                          text="Customers")
             fig.update_traces(textposition="outside", marker_cornerradius=4)
             fig.update_layout(**lay(height=280, coloraxis_showscale=False))
-            st.plotly_chart(fig, use_container_width=True, key="fig_17")
+            st.plotly_chart(fig, use_container_width=True, key="pc_17")
         with col2:
             section("Avg Monetary by RFM Score")
             avg_mon = rfm_scored.groupby("RFM_Score")["Monetary"].mean().reset_index()
@@ -511,7 +511,7 @@ elif page == "📈 RFM Analysis":
                          labels={"Avg Monetary":"Avg Spend (£)"})
             fig.update_layout(**lay(height=280, coloraxis_showscale=False))
             fig.update_traces(marker_cornerradius=4)
-            st.plotly_chart(fig, use_container_width=True, key="fig_18")
+            st.plotly_chart(fig, use_container_width=True, key="pc_18")
 
         col1,col2,col3 = st.columns(3)
         for col, metric, label in zip([col1,col2,col3],
@@ -525,7 +525,7 @@ elif page == "📈 RFM Analysis":
                              color="Count", color_continuous_scale=TEAL_CS)
                 fig.update_layout(**lay(height=220, coloraxis_showscale=False))
                 fig.update_traces(marker_cornerradius=4)
-                st.plotly_chart(fig, use_container_width=True, key="fig_19")
+                st.plotly_chart(fig, use_container_width=True, key="pc_19")
 
     # ── Tab 3: 2D Maps ────────────────────────────────────────────────────────
     with tab3:
@@ -539,7 +539,7 @@ elif page == "📈 RFM Analysis":
                              hover_data=["CustomerID","Frequency"],
                              labels={"Monetary":"Monetary (£)"})
             fig.update_layout(**lay(height=340))
-            st.plotly_chart(fig, use_container_width=True, key="fig_20")
+            st.plotly_chart(fig, use_container_width=True, key="pc_20")
         with col2:
             section("Recency vs Frequency — Segment Map")
             rfm_cap4 = rfm_s[rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.98)]
@@ -549,7 +549,7 @@ elif page == "📈 RFM Analysis":
                              hover_data=["CustomerID","Monetary"],
                              labels={"Frequency":"Frequency (orders)"})
             fig.update_layout(**lay(height=340))
-            st.plotly_chart(fig, use_container_width=True, key="fig_21")
+            st.plotly_chart(fig, use_container_width=True, key="pc_21")
 
         section("Heatmap — Avg Monetary by R-Score × F-Score")
         rfm_scored2 = rfm_a.copy()
@@ -566,7 +566,7 @@ elif page == "📈 RFM Analysis":
         fig.update_layout(**lay(height=300,
                                 xaxis=dict(title="Frequency Score"),
                                 yaxis=dict(title="Recency Score")))
-        st.plotly_chart(fig, use_container_width=True, key="fig_22")
+        st.plotly_chart(fig, use_container_width=True, key="pc_22")
 
     # ── Tab 4: 3D View ────────────────────────────────────────────────────────
     with tab4:
@@ -590,7 +590,7 @@ elif page == "📈 RFM Analysis":
                           ),
                           font=dict(color="#94d8cc"),
                           height=520, margin=dict(l=0,r=0,t=20,b=0))
-        st.plotly_chart(fig, use_container_width=True, key="fig_23")
+        st.plotly_chart(fig, use_container_width=True, key="pc_23")
         st.caption("Drag to rotate · Scroll to zoom · Click legend to toggle segments.")
 
     # ── Tab 5: Customer Table ─────────────────────────────────────────────────
@@ -646,7 +646,7 @@ elif page == "🎯 Customer Segments":
                           color_discrete_sequence=["#2dd4bf"])
             fig.update_traces(line_width=2.5, marker_size=7, marker_color="#5eead4")
             fig.update_layout(**lay(height=300))
-            st.plotly_chart(fig, use_container_width=True, key="fig_24")
+            st.plotly_chart(fig, use_container_width=True, key="pc_24")
         with col2:
             section("Silhouette Scores")
             fig = px.line(x=ks, y=silhouettes, markers=True,
@@ -654,7 +654,7 @@ elif page == "🎯 Customer Segments":
                           color_discrete_sequence=["#f97316"])
             fig.update_traces(line_width=2.5, marker_size=7, marker_color="#fb923c")
             fig.update_layout(**lay(height=300))
-            st.plotly_chart(fig, use_container_width=True, key="fig_25")
+            st.plotly_chart(fig, use_container_width=True, key="pc_25")
         st.info(f"✅  Best k by silhouette = **{best_k}**  |  Current k = **4**  |  Silhouette = **{sil}**")
 
     with tab2:
@@ -688,7 +688,7 @@ elif page == "🎯 Customer Segments":
                          color_discrete_map=SEG_COLORS, text="Count")
             fig.update_traces(textposition="outside", marker_cornerradius=5)
             fig.update_layout(**lay(height=310, showlegend=False))
-            st.plotly_chart(fig, use_container_width=True, key="fig_26")
+            st.plotly_chart(fig, use_container_width=True, key="pc_26")
         with col2:
             section("Recency vs Monetary (bubble = Frequency)")
             fig = px.scatter(rfm_seg, x="Recency", y="Monetary", color="Segment",
@@ -696,7 +696,7 @@ elif page == "🎯 Customer Segments":
                              opacity=0.65, color_discrete_map=SEG_COLORS,
                              labels={"Monetary":"Monetary (£)"})
             fig.update_layout(**lay(height=310))
-            st.plotly_chart(fig, use_container_width=True, key="fig_27")
+            st.plotly_chart(fig, use_container_width=True, key="pc_27")
 
         section("Average RFM per Segment — Grouped Bar")
         pr = rfm_seg.groupby("Segment")[["Recency","Frequency","Monetary"]].mean().round(1).reset_index()
@@ -704,7 +704,7 @@ elif page == "🎯 Customer Segments":
                      barmode="group",
                      color_discrete_sequence=["#2dd4bf","#38bdf8","#f97316"])
         fig.update_layout(**lay(height=290))
-        st.plotly_chart(fig, use_container_width=True, key="fig_28")
+        st.plotly_chart(fig, use_container_width=True, key="pc_28")
 
     with tab4:
         st.markdown("#### Enter RFM values to predict the customer's segment")
@@ -829,7 +829,7 @@ elif page == "🧪 Hypothesis Tests":
                         color_discrete_map={"UK":"#2dd4bf","Non-UK":"#f97316"},
                         labels={"TotalPrice":"Total Price (£)"})
         fig.update_layout(**lay(height=320, showlegend=True))
-        st.plotly_chart(fig, use_container_width=True, key="fig_29")
+        st.plotly_chart(fig, use_container_width=True, key="pc_29")
         insight("Reject H₀: UK and Non-UK customers spend significantly differently. Tailor pricing & promotions per region." if r1
                 else "Fail to Reject H₀: No significant spending difference between regions.", r1)
 
@@ -848,7 +848,7 @@ elif page == "🧪 Hypothesis Tests":
         fig.add_trace(go.Scatter(x=x_rng, y=m*x_rng+b, mode="lines",
                                  line=dict(color="#f97316", width=2), name="Trend"))
         fig.update_layout(**lay(height=290))
-        st.plotly_chart(fig, use_container_width=True, key="fig_30")
+        st.plotly_chart(fig, use_container_width=True, key="pc_30")
         insight("Reject H₀: Quantity and UnitPrice are significantly correlated." if rej2
                 else "Fail to Reject H₀: No significant linear correlation between Quantity and UnitPrice.", rej2)
 
@@ -865,7 +865,7 @@ elif page == "🧪 Hypothesis Tests":
                      labels={"AvgSpend":"Avg Spend (£)"})
         fig.update_layout(**lay(height=260, coloraxis_showscale=False))
         fig.update_traces(marker_cornerradius=4)
-        st.plotly_chart(fig, use_container_width=True, key="fig_31")
+        st.plotly_chart(fig, use_container_width=True, key="pc_31")
         insight("Reject H₀: Spending varies significantly across weekdays. Schedule campaigns on high-spend days." if r3
                 else "Fail to Reject H₀: No significant spending variation across weekdays.", r3)
 
@@ -880,7 +880,7 @@ elif page == "🧪 Hypothesis Tests":
                        color_discrete_map=SEG_COLORS, points="outliers",
                        labels={"Monetary":"Total Spend (£)"})
         fig.update_layout(**lay(height=270, showlegend=False))
-        st.plotly_chart(fig, use_container_width=True, key="fig_32")
+        st.plotly_chart(fig, use_container_width=True, key="pc_32")
         insight("Reject H₀: High-Value customers spend significantly more than At-Risk customers." if r4
                 else "Fail to Reject H₀: No significant difference between High-Value and At-Risk spend.", r4)
 
@@ -937,7 +937,7 @@ elif page == "📈 RFM Analysis":
                              labels={"Score":f"{score_col} (1=Low, 5=High)"})
                 fig.update_traces(textposition="outside", marker_cornerradius=5)
                 fig.update_layout(**lay(height=260, coloraxis_showscale=False))
-                st.plotly_chart(fig, use_container_width=True, key="fig_33")
+                st.plotly_chart(fig, use_container_width=True, key="pc_33")
 
         section("RFM Total Score Distribution")
         ts = rfm_s["RFM_Total"].value_counts().sort_index().reset_index()
@@ -948,7 +948,7 @@ elif page == "📈 RFM Analysis":
                      labels={"Total Score":"RFM Total Score (3–15)"})
         fig.update_layout(**lay(height=250, coloraxis_showscale=False))
         fig.update_traces(marker_cornerradius=4)
-        st.plotly_chart(fig, use_container_width=True, key="fig_34")
+        st.plotly_chart(fig, use_container_width=True, key="pc_34")
 
     # ── TAB 2 — RFM Segments Map ──────────────────────────────────────────────
     with tab2:
@@ -962,7 +962,7 @@ elif page == "📈 RFM Analysis":
                          color_discrete_map=SEG_COLORS)
             fig.update_traces(textposition="outside", marker_cornerradius=6)
             fig.update_layout(**lay(height=310, showlegend=False))
-            st.plotly_chart(fig, use_container_width=True, key="fig_35")
+            st.plotly_chart(fig, use_container_width=True, key="pc_35")
 
         with col2:
             section("Revenue Share per Segment")
@@ -973,7 +973,7 @@ elif page == "📈 RFM Analysis":
             fig.update_traces(textposition="inside", textinfo="percent+label",
                               textfont_size=12)
             fig.update_layout(**lay(height=310))
-            st.plotly_chart(fig, use_container_width=True, key="fig_36")
+            st.plotly_chart(fig, use_container_width=True, key="pc_36")
 
         section("Average R / F / M Score per Segment")
         avg_scores = rfm_s.groupby("Segment")[["R_Score","F_Score","M_Score"]].mean().round(2).reset_index()
@@ -983,7 +983,7 @@ elif page == "📈 RFM Analysis":
                      color_discrete_sequence=["#2dd4bf","#38bdf8","#f97316"],
                      labels={"value":"Avg Score (1–5)","variable":"Metric"})
         fig.update_layout(**lay(height=280))
-        st.plotly_chart(fig, use_container_width=True, key="fig_37")
+        st.plotly_chart(fig, use_container_width=True, key="pc_37")
 
     # ── TAB 3 — Recency vs Frequency ──────────────────────────────────────────
     with tab3:
@@ -998,7 +998,7 @@ elif page == "📈 RFM Analysis":
                          labels={"Frequency":"Number of Orders",
                                  "Recency":"Days Since Last Purchase"})
         fig.update_layout(**lay(height=420))
-        st.plotly_chart(fig, use_container_width=True, key="fig_38")
+        st.plotly_chart(fig, use_container_width=True, key="pc_38")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -1009,7 +1009,7 @@ elif page == "📈 RFM Analysis":
                              labels={"Monetary":"Total Spend (£)",
                                      "Recency":"Days Since Last Purchase"})
             fig.update_layout(**lay(height=290))
-            st.plotly_chart(fig, use_container_width=True, key="fig_39")
+            st.plotly_chart(fig, use_container_width=True, key="pc_39")
         with col2:
             section("Frequency vs Monetary")
             fig = px.scatter(rfm_plot, x="Frequency", y="Monetary",
@@ -1018,7 +1018,7 @@ elif page == "📈 RFM Analysis":
                              labels={"Monetary":"Total Spend (£)",
                                      "Frequency":"Number of Orders"})
             fig.update_layout(**lay(height=290))
-            st.plotly_chart(fig, use_container_width=True, key="fig_40")
+            st.plotly_chart(fig, use_container_width=True, key="pc_40")
 
     # ── TAB 4 — Top & Bottom Customers ────────────────────────────────────────
     with tab4:
@@ -1032,7 +1032,7 @@ elif page == "📈 RFM Analysis":
                          labels={"x":"Total Spend (£)","y":"Customer ID"})
             fig.update_layout(**lay(height=400, yaxis=dict(autorange="reversed"),
                                     showlegend=True))
-            st.plotly_chart(fig, use_container_width=True, key="fig_41")
+            st.plotly_chart(fig, use_container_width=True, key="pc_41")
 
         with col2:
             section("⚠️ Bottom 15 Customers — Most At-Risk")
@@ -1043,7 +1043,7 @@ elif page == "📈 RFM Analysis":
                          labels={"x":"Days Since Last Purchase","y":"Customer ID"})
             fig.update_layout(**lay(height=400, yaxis=dict(autorange="reversed"),
                                     showlegend=True))
-            st.plotly_chart(fig, use_container_width=True, key="fig_42")
+            st.plotly_chart(fig, use_container_width=True, key="pc_42")
 
         section("RFM Score Heatmap — R Score vs F Score (avg Monetary)")
         heat = rfm_s.groupby(["R_Score","F_Score"])["Monetary"].mean().reset_index()
@@ -1060,7 +1060,7 @@ elif page == "📈 RFM Analysis":
         fig.update_layout(**lay(height=320,
                                 xaxis=dict(title="Frequency Score"),
                                 yaxis=dict(title="Recency Score")))
-        st.plotly_chart(fig, use_container_width=True, key="fig_43")
+        st.plotly_chart(fig, use_container_width=True, key="pc_43")
 
     # ── TAB 5 — Full RFM Table ────────────────────────────────────────────────
     with tab5:
