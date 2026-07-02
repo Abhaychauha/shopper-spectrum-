@@ -208,8 +208,8 @@ with st.sidebar:
     uploaded = st.file_uploader(" ", type=["csv"], label_visibility="collapsed")
     st.divider()
     st.markdown("**Navigate**")
-    page = st.radio("", ["🏠 Overview","📊 EDA & Insights","🎯 Customer Segments",
-                         "🔮 Recommendations","🧪 Hypothesis Tests"],
+    page = st.radio("", ["🏠 Overview","📊 EDA & Insights","📈 RFM Analysis",
+                         "🎯 Customer Segments","🔮 Recommendations","🧪 Hypothesis Tests"],
                     label_visibility="collapsed")
 
 df = None
@@ -412,6 +412,215 @@ elif page == "📊 EDA & Insights":
                                    color_discrete_sequence=[cs[1][1]])
                 fig.update_layout(**lay(height=230, bargap=0.04))
                 st.plotly_chart(fig, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RFM ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "📈 RFM Analysis":
+    hero()
+    if df is None:
+        st.warning("Upload data first."); st.stop()
+
+    with st.spinner("Computing RFM…"):
+        rfm_a = build_rfm(df)
+        rfm_s, _, _, lmap_a, _, _, _, sil_a = run_clustering(rfm_a)
+
+    # ── Summary KPIs ──────────────────────────────────────────────────────────
+    c1,c2,c3,c4 = st.columns(4)
+    kpi_card(c1, "Avg Recency",   f"{rfm_a['Recency'].mean():.0f}d",  "days since last purchase")
+    kpi_card(c2, "Avg Frequency", f"{rfm_a['Frequency'].mean():.1f}",  "orders per customer", "#38bdf8")
+    kpi_card(c3, "Avg Monetary",  f"£{rfm_a['Monetary'].mean():,.0f}", "spend per customer",  "#f97316")
+    kpi_card(c4, "Silhouette",    str(sil_a),                             "cluster quality",    "#facc15")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    tab1,tab2,tab3,tab4,tab5 = st.tabs(
+        ["📊 Distributions","🔢 RFM Scoring","🗺️ 2D Maps","📦 3D View","📋 Customer Table"])
+
+    # ── Tab 1: Distributions ──────────────────────────────────────────────────
+    with tab1:
+        col1,col2,col3 = st.columns(3)
+        for col, metric, color in zip([col1,col2,col3],
+                                       ["Recency","Frequency","Monetary"],
+                                       ["#2dd4bf","#38bdf8","#f97316"]):
+            with col:
+                section(f"{metric} Distribution")
+                cap_q = 0.99 if metric != "Frequency" else 1.0
+                data = rfm_a[rfm_a[metric] < rfm_a[metric].quantile(cap_q)]
+                fig = px.histogram(data, x=metric, nbins=45,
+                                   color_discrete_sequence=[color])
+                fig.update_layout(**lay(height=230, bargap=0.04))
+                st.plotly_chart(fig, use_container_width=True)
+
+        col1,col2 = st.columns(2)
+        with col1:
+            section("Recency vs Frequency")
+            rfm_cap = rfm_a[rfm_a["Frequency"] < rfm_a["Frequency"].quantile(0.99)]
+            fig = px.scatter(rfm_cap, x="Recency", y="Frequency",
+                             color="Segment" if "Segment" in rfm_s.columns else None,
+                             opacity=0.5, color_discrete_map=SEG_COLORS,
+                             labels={"Frequency":"Frequency (orders)"},
+                             data_frame=rfm_s[rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.99)])
+            fig.update_layout(**lay(height=290))
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            section("Frequency vs Monetary")
+            rfm_cap2 = rfm_s[(rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.99)) &
+                              (rfm_s["Monetary"]  < rfm_s["Monetary"].quantile(0.99))]
+            fig = px.scatter(rfm_cap2, x="Frequency", y="Monetary",
+                             color="Segment", opacity=0.5,
+                             color_discrete_map=SEG_COLORS,
+                             labels={"Monetary":"Monetary (£)"})
+            fig.update_layout(**lay(height=290))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 2: RFM Scoring ────────────────────────────────────────────────────
+    with tab2:
+        st.markdown("""
+        <div style="background:#0d2233;border:1px solid #0e3a4a;border-radius:10px;
+             padding:16px 20px;margin-bottom:16px;font-size:13px;color:#94d8cc;">
+          <b style="color:#2dd4bf;">How RFM scoring works:</b><br>
+          Each customer receives a score of <b>1–5</b> for Recency (R), Frequency (F), and Monetary (M),
+          then combined into an <b>RFM Score</b>. Higher = better customer. Scores are computed
+          using quintile-based binning — the top 20% of customers on each metric receive a 5.
+        </div>""", unsafe_allow_html=True)
+
+        rfm_scored = rfm_a.copy()
+        rfm_scored["R_Score"] = pd.qcut(rfm_scored["Recency"],   5, labels=[5,4,3,2,1]).astype(int)
+        rfm_scored["F_Score"] = pd.qcut(rfm_scored["Frequency"].rank(method="first"), 5, labels=[1,2,3,4,5]).astype(int)
+        rfm_scored["M_Score"] = pd.qcut(rfm_scored["Monetary"].rank(method="first"),  5, labels=[1,2,3,4,5]).astype(int)
+        rfm_scored["RFM_Score"] = rfm_scored["R_Score"] + rfm_scored["F_Score"] + rfm_scored["M_Score"]
+
+        col1,col2 = st.columns(2)
+        with col1:
+            section("RFM Score Distribution")
+            sc_dist = rfm_scored["RFM_Score"].value_counts().sort_index().reset_index()
+            sc_dist.columns = ["RFM Score","Customers"]
+            fig = px.bar(sc_dist, x="RFM Score", y="Customers",
+                         color="RFM Score", color_continuous_scale=TEAL_CS,
+                         text="Customers")
+            fig.update_traces(textposition="outside", marker_cornerradius=4)
+            fig.update_layout(**lay(height=280, coloraxis_showscale=False))
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            section("Avg Monetary by RFM Score")
+            avg_mon = rfm_scored.groupby("RFM_Score")["Monetary"].mean().reset_index()
+            avg_mon.columns=["RFM Score","Avg Monetary"]
+            fig = px.bar(avg_mon, x="RFM Score", y="Avg Monetary",
+                         color="Avg Monetary", color_continuous_scale=ORNG_CS,
+                         labels={"Avg Monetary":"Avg Spend (£)"})
+            fig.update_layout(**lay(height=280, coloraxis_showscale=False))
+            fig.update_traces(marker_cornerradius=4)
+            st.plotly_chart(fig, use_container_width=True)
+
+        col1,col2,col3 = st.columns(3)
+        for col, metric, label in zip([col1,col2,col3],
+                                       ["R_Score","F_Score","M_Score"],
+                                       ["Recency Score (R)","Frequency Score (F)","Monetary Score (M)"]):
+            with col:
+                section(label)
+                vc = rfm_scored[metric].value_counts().sort_index().reset_index()
+                vc.columns=["Score","Count"]
+                fig = px.bar(vc, x="Score", y="Count",
+                             color="Count", color_continuous_scale=TEAL_CS)
+                fig.update_layout(**lay(height=220, coloraxis_showscale=False))
+                fig.update_traces(marker_cornerradius=4)
+                st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 3: 2D Maps ────────────────────────────────────────────────────────
+    with tab3:
+        col1,col2 = st.columns(2)
+        with col1:
+            section("Recency vs Monetary — Segment Map")
+            rfm_cap3 = rfm_s[rfm_s["Monetary"] < rfm_s["Monetary"].quantile(0.98)]
+            fig = px.scatter(rfm_cap3, x="Recency", y="Monetary",
+                             color="Segment", size="Frequency",
+                             opacity=0.65, color_discrete_map=SEG_COLORS,
+                             hover_data=["CustomerID","Frequency"],
+                             labels={"Monetary":"Monetary (£)"})
+            fig.update_layout(**lay(height=340))
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            section("Recency vs Frequency — Segment Map")
+            rfm_cap4 = rfm_s[rfm_s["Frequency"] < rfm_s["Frequency"].quantile(0.98)]
+            fig = px.scatter(rfm_cap4, x="Recency", y="Frequency",
+                             color="Segment", size="Monetary",
+                             opacity=0.65, color_discrete_map=SEG_COLORS,
+                             hover_data=["CustomerID","Monetary"],
+                             labels={"Frequency":"Frequency (orders)"})
+            fig.update_layout(**lay(height=340))
+            st.plotly_chart(fig, use_container_width=True)
+
+        section("Heatmap — Avg Monetary by R-Score × F-Score")
+        rfm_scored2 = rfm_a.copy()
+        rfm_scored2["R_Score"] = pd.qcut(rfm_scored2["Recency"], 5, labels=[5,4,3,2,1]).astype(int)
+        rfm_scored2["F_Score"] = pd.qcut(rfm_scored2["Frequency"].rank(method="first"), 5, labels=[1,2,3,4,5]).astype(int)
+        pivot = rfm_scored2.pivot_table(values="Monetary", index="R_Score",
+                                         columns="F_Score", aggfunc="mean").round(0)
+        fig = go.Figure(go.Heatmap(
+            z=pivot.values, x=[f"F{c}" for c in pivot.columns],
+            y=[f"R{r}" for r in pivot.index],
+            colorscale="Teal", text=pivot.values.astype(int),
+            texttemplate="£%{text}", textfont_size=11,
+        ))
+        fig.update_layout(**lay(height=300,
+                                xaxis=dict(title="Frequency Score"),
+                                yaxis=dict(title="Recency Score")))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 4: 3D View ────────────────────────────────────────────────────────
+    with tab4:
+        section("3D RFM Scatter — Recency · Frequency · Monetary")
+        rfm_3d = rfm_s[rfm_s["Monetary"] < rfm_s["Monetary"].quantile(0.98)].copy()
+        fig = px.scatter_3d(rfm_3d, x="Recency", y="Frequency", z="Monetary",
+                             color="Segment", opacity=0.65,
+                             color_discrete_map=SEG_COLORS,
+                             hover_data=["CustomerID"],
+                             labels={"Monetary":"Monetary (£)","Frequency":"Frequency (orders)"})
+        fig.update_traces(marker_size=3)
+        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",
+                          scene=dict(
+                              bgcolor="#0a1a24",
+                              xaxis=dict(backgroundcolor="#0a1a24", gridcolor="#0e3344",
+                                         showbackground=True, title="Recency"),
+                              yaxis=dict(backgroundcolor="#0a1a24", gridcolor="#0e3344",
+                                         showbackground=True, title="Frequency"),
+                              zaxis=dict(backgroundcolor="#0a1a24", gridcolor="#0e3344",
+                                         showbackground=True, title="Monetary (£)"),
+                          ),
+                          font=dict(color="#94d8cc"),
+                          height=520, margin=dict(l=0,r=0,t=20,b=0))
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Drag to rotate · Scroll to zoom · Click legend to toggle segments.")
+
+    # ── Tab 5: Customer Table ─────────────────────────────────────────────────
+    with tab5:
+        rfm_display = rfm_s[[            "CustomerID","Recency","Frequency","Monetary","Segment"        ]].sort_values("Monetary", ascending=False).reset_index(drop=True)
+
+        col1,col2,col3 = st.columns(3)
+        seg_filter  = col1.selectbox("Filter by Segment",
+                                      ["All"] + list(SEG_COLORS.keys()))
+        rec_max     = col2.slider("Max Recency (days)", 1, int(rfm_display["Recency"].max()),
+                                   int(rfm_display["Recency"].max()))
+        min_spend   = col3.number_input("Min Monetary (£)", 0.0,
+                                         float(rfm_display["Monetary"].max()), 0.0, step=100.0)
+
+        filtered = rfm_display.copy()
+        if seg_filter != "All":
+            filtered = filtered[filtered["Segment"] == seg_filter]
+        filtered = filtered[(filtered["Recency"] <= rec_max) &
+                             (filtered["Monetary"] >= min_spend)]
+
+        st.caption(f"Showing **{len(filtered):,}** customers")
+        st.dataframe(
+            filtered.style.format({"Monetary":"£{:,.2f}","Recency":"{:.0f}d",
+                                    "Frequency":"{:.0f}"}),
+            use_container_width=True, height=400)
+
+        csv = filtered.to_csv(index=False).encode()
+        st.download_button("⬇ Download filtered CSV", csv,
+                           "rfm_customers.csv", "text/csv")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CUSTOMER SEGMENTS
@@ -675,3 +884,214 @@ elif page == "🧪 Hypothesis Tests":
         st.plotly_chart(fig, use_container_width=True)
         insight("Reject H₀: High-Value customers spend significantly more than At-Risk customers." if r4
                 else "Fail to Reject H₀: No significant difference between High-Value and At-Risk spend.", r4)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RFM ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "📈 RFM Analysis":
+    hero()
+    if df is None:
+        st.warning("Upload `online_retail.csv` in the sidebar to continue."); st.stop()
+
+    with st.spinner("Building RFM table…"):
+        rfm     = build_rfm(df)
+        rfm_seg, km, sc, lmap, _, _, _, sil = run_clustering(rfm)
+
+    # ── RFM Scoring (1-5 scale) ────────────────────────────────────────────────
+    rfm_s = rfm_seg.copy()
+    rfm_s["R_Score"] = pd.qcut(rfm_s["Recency"],   5, labels=[5,4,3,2,1]).astype(int)
+    rfm_s["F_Score"] = pd.qcut(rfm_s["Frequency"].rank(method="first"), 5, labels=[1,2,3,4,5]).astype(int)
+    rfm_s["M_Score"] = pd.qcut(rfm_s["Monetary"].rank(method="first"),  5, labels=[1,2,3,4,5]).astype(int)
+    rfm_s["RFM_Score"] = rfm_s["R_Score"]*100 + rfm_s["F_Score"]*10 + rfm_s["M_Score"]
+    rfm_s["RFM_Total"] = rfm_s[["R_Score","F_Score","M_Score"]].sum(axis=1)
+
+    # ── Summary KPIs ──────────────────────────────────────────────────────────
+    c1,c2,c3,c4,c5 = st.columns(5)
+    kpi_card(c1, "Avg Recency",   f"{rfm_s['Recency'].mean():.0f}d",   "days since purchase")
+    kpi_card(c2, "Avg Frequency", f"{rfm_s['Frequency'].mean():.1f}",  "orders per customer", "#38bdf8")
+    kpi_card(c3, "Avg Monetary",  f"£{rfm_s['Monetary'].mean():,.0f}", "spend per customer",  "#f97316")
+    kpi_card(c4, "Top RFM Score", f"{rfm_s['RFM_Total'].max()}",       "max score (15)",      "#facc15")
+    kpi_card(c5, "Silhouette",    str(sil),                             "cluster quality",     "#a78bfa")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["📊 Score Distributions", "🗺️ RFM Segments Map",
+         "📉 Recency vs Frequency", "💎 Top & Bottom Customers", "📋 Full RFM Table"])
+
+    # ── TAB 1 — Score Distributions ───────────────────────────────────────────
+    with tab1:
+        col1, col2, col3 = st.columns(3)
+        for col, metric, score_col, color in [
+            (col1, "Recency Score (R)",   "R_Score", "#2dd4bf"),
+            (col2, "Frequency Score (F)", "F_Score", "#38bdf8"),
+            (col3, "Monetary Score (M)",  "M_Score", "#f97316"),
+        ]:
+            with col:
+                section(metric)
+                vc = rfm_s[score_col].value_counts().sort_index().reset_index()
+                vc.columns = ["Score","Customers"]
+                fig = px.bar(vc, x="Score", y="Customers",
+                             color="Customers",
+                             color_continuous_scale=[[0,"#071318"],[1,color]],
+                             text="Customers",
+                             labels={"Score":f"{score_col} (1=Low, 5=High)"})
+                fig.update_traces(textposition="outside", marker_cornerradius=5)
+                fig.update_layout(**lay(height=260, coloraxis_showscale=False))
+                st.plotly_chart(fig, use_container_width=True)
+
+        section("RFM Total Score Distribution")
+        ts = rfm_s["RFM_Total"].value_counts().sort_index().reset_index()
+        ts.columns = ["Total Score","Customers"]
+        fig = px.bar(ts, x="Total Score", y="Customers",
+                     color="Customers",
+                     color_continuous_scale=TEAL_CS,
+                     labels={"Total Score":"RFM Total Score (3–15)"})
+        fig.update_layout(**lay(height=250, coloraxis_showscale=False))
+        fig.update_traces(marker_cornerradius=4)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── TAB 2 — RFM Segments Map ──────────────────────────────────────────────
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1:
+            section("Customer Count per Segment")
+            vc2 = rfm_s["Segment"].value_counts().reset_index()
+            vc2.columns = ["Segment","Customers"]
+            fig = px.bar(vc2, x="Segment", y="Customers",
+                         color="Segment", text="Customers",
+                         color_discrete_map=SEG_COLORS)
+            fig.update_traces(textposition="outside", marker_cornerradius=6)
+            fig.update_layout(**lay(height=310, showlegend=False))
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            section("Revenue Share per Segment")
+            rev_seg = rfm_s.groupby("Segment")["Monetary"].sum().reset_index()
+            fig = px.pie(rev_seg, names="Segment", values="Monetary",
+                         hole=0.45, color="Segment",
+                         color_discrete_map=SEG_COLORS)
+            fig.update_traces(textposition="inside", textinfo="percent+label",
+                              textfont_size=12)
+            fig.update_layout(**lay(height=310))
+            st.plotly_chart(fig, use_container_width=True)
+
+        section("Average R / F / M Score per Segment")
+        avg_scores = rfm_s.groupby("Segment")[["R_Score","F_Score","M_Score"]].mean().round(2).reset_index()
+        fig = px.bar(avg_scores, x="Segment",
+                     y=["R_Score","F_Score","M_Score"],
+                     barmode="group",
+                     color_discrete_sequence=["#2dd4bf","#38bdf8","#f97316"],
+                     labels={"value":"Avg Score (1–5)","variable":"Metric"})
+        fig.update_layout(**lay(height=280))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── TAB 3 — Recency vs Frequency ──────────────────────────────────────────
+    with tab3:
+        section("Recency vs Frequency — coloured by Segment (bubble = Monetary)")
+        cap_m = rfm_s["Monetary"].quantile(0.97)
+        rfm_plot = rfm_s[rfm_s["Monetary"] <= cap_m].copy()
+        fig = px.scatter(rfm_plot, x="Recency", y="Frequency",
+                         size="Monetary", color="Segment",
+                         color_discrete_map=SEG_COLORS,
+                         hover_data=["CustomerID","Monetary","R_Score","F_Score","M_Score"],
+                         opacity=0.7,
+                         labels={"Frequency":"Number of Orders",
+                                 "Recency":"Days Since Last Purchase"})
+        fig.update_layout(**lay(height=420))
+        st.plotly_chart(fig, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            section("Recency vs Monetary")
+            fig = px.scatter(rfm_plot, x="Recency", y="Monetary",
+                             color="Segment", color_discrete_map=SEG_COLORS,
+                             opacity=0.6,
+                             labels={"Monetary":"Total Spend (£)",
+                                     "Recency":"Days Since Last Purchase"})
+            fig.update_layout(**lay(height=290))
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            section("Frequency vs Monetary")
+            fig = px.scatter(rfm_plot, x="Frequency", y="Monetary",
+                             color="Segment", color_discrete_map=SEG_COLORS,
+                             opacity=0.6,
+                             labels={"Monetary":"Total Spend (£)",
+                                     "Frequency":"Number of Orders"})
+            fig.update_layout(**lay(height=290))
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── TAB 4 — Top & Bottom Customers ────────────────────────────────────────
+    with tab4:
+        col1, col2 = st.columns(2)
+        with col1:
+            section("🏆 Top 15 Customers by Total Spend")
+            top15 = rfm_s.nlargest(15,"Monetary")[["CustomerID","Recency","Frequency","Monetary","Segment","RFM_Total"]]
+            fig = px.bar(top15, x="Monetary", y=top15["CustomerID"].astype(str),
+                         orientation="h", color="Segment",
+                         color_discrete_map=SEG_COLORS,
+                         labels={"x":"Total Spend (£)","y":"Customer ID"})
+            fig.update_layout(**lay(height=400, yaxis=dict(autorange="reversed"),
+                                    showlegend=True))
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            section("⚠️ Bottom 15 Customers — Most At-Risk")
+            bot15 = rfm_s.nlargest(15,"Recency")[["CustomerID","Recency","Frequency","Monetary","Segment","RFM_Total"]]
+            fig = px.bar(bot15, x="Recency", y=bot15["CustomerID"].astype(str),
+                         orientation="h", color="Segment",
+                         color_discrete_map=SEG_COLORS,
+                         labels={"x":"Days Since Last Purchase","y":"Customer ID"})
+            fig.update_layout(**lay(height=400, yaxis=dict(autorange="reversed"),
+                                    showlegend=True))
+            st.plotly_chart(fig, use_container_width=True)
+
+        section("RFM Score Heatmap — R Score vs F Score (avg Monetary)")
+        heat = rfm_s.groupby(["R_Score","F_Score"])["Monetary"].mean().reset_index()
+        heat_piv = heat.pivot(index="R_Score", columns="F_Score", values="Monetary").fillna(0)
+        fig = go.Figure(go.Heatmap(
+            z=heat_piv.values,
+            x=[f"F={c}" for c in heat_piv.columns],
+            y=[f"R={r}" for r in heat_piv.index],
+            colorscale=TEAL_CS,
+            text=np.round(heat_piv.values,0).astype(int),
+            texttemplate="£%{text:,}",
+            hoverongaps=False,
+        ))
+        fig.update_layout(**lay(height=320,
+                                xaxis=dict(title="Frequency Score"),
+                                yaxis=dict(title="Recency Score")))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── TAB 5 — Full RFM Table ────────────────────────────────────────────────
+    with tab5:
+        section("Full RFM Table with Scores")
+
+        # Filters
+        fc1, fc2, fc3 = st.columns(3)
+        seg_filter = fc1.multiselect("Filter by Segment",
+                                      options=rfm_s["Segment"].unique().tolist(),
+                                      default=rfm_s["Segment"].unique().tolist())
+        r_filter = fc2.slider("Min R Score", 1, 5, 1)
+        m_filter = fc3.slider("Min M Score", 1, 5, 1)
+
+        display = rfm_s[
+            (rfm_s["Segment"].isin(seg_filter)) &
+            (rfm_s["R_Score"] >= r_filter) &
+            (rfm_s["M_Score"] >= m_filter)
+        ][["CustomerID","Recency","Frequency","Monetary",
+           "R_Score","F_Score","M_Score","RFM_Total","Segment"]].sort_values("RFM_Total", ascending=False)
+
+        st.caption(f"Showing **{len(display):,}** customers")
+        st.dataframe(
+            display.style.format({
+                "Monetary":"£{:,.2f}",
+                "Recency":"{:.0f}",
+            }).background_gradient(subset=["RFM_Total"], cmap="Blues"),
+            use_container_width=True, height=400
+        )
+
+        # Download button
+        csv = display.to_csv(index=False).encode()
+        st.download_button("⬇️ Download RFM Table as CSV", csv,
+                           "rfm_analysis.csv", "text/csv")
